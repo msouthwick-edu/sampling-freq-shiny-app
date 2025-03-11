@@ -22,6 +22,7 @@
 # could create a "source script" and call it in with source("file-name.R") and it will run all those packages!
 library(shiny) # app
 library(shinydashboard) # will be nice for creating tabs (MC error, raw data tables, models fit, etc.)
+library(shinyWidgets)
 library(tidyverse) # piping and ggplot
 library(ghibli)
 library(DT) # data tables
@@ -32,8 +33,10 @@ library(DT) # data tables
 # data ####
 load("data\\results-data-arima.RData")
 load("data\\outcome-data-arima.RData")
-results.plot <- results.plot |> 
-  rename("ar" = "dt-ar (phi)")
+results.long <- results.plot |> 
+  rename("ar" = "dt-ar (phi)") |> 
+  pivot_longer(cols = ivar:ar,
+               names_to = "indicator")
 outcome.long <- outcome.plot |> 
     pivot_longer(
         cols = c(5:11)
@@ -42,10 +45,6 @@ outcome.long <- outcome.plot |>
   mutate(indicator = factor(indicator,
                             levels = c("ivar", "isd", "imean", "auto.cor", "dt-ar (phi)"),
                             labels = c("ivar", "isd", "imean", "auto.cor", "ar")))
-
-attributes(outcome.plot$indicator)
-
-ghibli_palettes$MononokeMedium
 
 # custom theme for plots ####
 mls_theme <- function(){
@@ -102,8 +101,13 @@ mls_theme <- function(){
       )
       )
 }
-gg.fill <- scale_fill_manual(values = c("sampled" = "#CD4F38FF", "dgp" = "#B3B8B1FF"),
+gg.fill <- scale_fill_manual(values = c("sampled" = "#3D4F7DFF", "dgp" = "#B3B8B1FF"),
                              labels = c("Hourly DGP", "Sampled"))
+gg.color <- scale_color_manual(values = c("ivar" = "#E48C2AFF", "imean" = "#B3B8B1FF",
+                                          "isd" = "#EAD890FF", "auto.cor" = "#3D4F7DFF",
+                                          "ar" = "#657060FF"))
+
+ghibli_palettes$MononokeMedium
 
 # ui dashboard ####
 sidebar <- dashboardSidebar(
@@ -120,54 +124,71 @@ body <- dashboardBody(
             fluidRow(
               box(title = "Simulation Approach",
                 htmlOutput("sim.method"),  
-                width=12
-                )
+                width=12)
               )
             ),
+    
     tabItem("results",
-    fluidRow(
-             box(
-        title = "Selection Box",
-        selectInput(inputId = "indicator",
-                        label = "Intraindividual Variability Indicator",
-                        choices = c("iVAR" = "ivar",
-                                    "iSD" = "isd",
-                                    "iMean" = "imean",
-                                    "Autocorrelation" = "auto.cor",
-                                    "AR(1)" = "ar"),
-                        selected = "iVar"),
-        selectInput(inputId = "name",
-                        label = "Performance Metrics",
-                        choices = c("Absolute Bias" = "abs.bias",
-                                    "Absolute Relative Bias" = "abs.rel.bias",
-                                    "Relative Bias" = "rel.bias",
-                                    "Mean Squared Error" = "mse",
-                                    "Root MSE" = "rmse",
-                                    "Efficiency" = "var.eff",
-                                    "Mean" = "mean"),
-                        selected = "Absolute Relative Bias"),
-        # radioButtons(inputId = "animate",
-        #                 label = "Animate Plot",
-        #                 choices = c("Show All Facets" = "all",
-        #                             "Reveal by Sample Size" = "rv.n",
-        #                             "Reveal by Sampling Frequency" = "rv.sf"),
-        #                 selected = "all"),
-        width = 4), # overall width is 12
+      fluidRow(
+               box(
+          title = "Indicator Box",
+          selectInput(inputId = "indicator",
+                          label = "Intraindividual Variability Indicator",
+                          choices = c("iVAR" = "ivar",
+                                      "iSD" = "isd",
+                                      "iMean" = "imean",
+                                      "Autocorrelation" = "auto.cor",
+                                      "AR(1)" = "ar"),
+                          selected = "iVar"),
+          selectizeInput(inputId = "underlying.data",
+                         label="Data Used",
+                         choices = c("Hourly Data Generating Process" = "dgp",
+                                     "Sampled Data Points" = "sampled"),
+                         select = "Sampled Data Points",
+                         multiple = TRUE,
+                         options = list(placeholder = 'Click here to select', 
+                                'plugins' = list('remove_button'))
+                 ),
+          width = 4), # overall width is 12
+          box(
+            title = "Distribution of Statistics (N=1000)",
+            plotOutput("distPlot"),
+              width = 8)
+          ),
+      fluidRow(
         box(
-          title = "Distribution of Statistics (N=1000)",
-          plotOutput("distPlot"),
+          title = "Performance Metrics",
+          selectizeInput(inputId = "indicator.perf",
+                         label="Indicator (select multiple):",
+                  choices = c("iVAR" = "ivar",
+                              "iSD" = "isd",
+                              "iMean" = "imean",
+                              "Autocorrelation" = "auto.cor",
+                              "AR(1)" = "ar"),
+                  selected = "iVAR",
+                 multiple = TRUE,
+                 options = list(placeholder = 'Click here to select', 
+                                'plugins' = list('remove_button'))
+                 ),
+          selectInput(inputId = "name",
+                          label = "Performance Metrics",
+                          choices = c("Absolute Bias" = "abs.bias",
+                                      "Absolute Relative Bias" = "abs.rel.bias",
+                                      "Relative Bias" = "rel.bias",
+                                      "Mean Squared Error" = "mse",
+                                      "Root MSE" = "rmse",
+                                      "Efficiency" = "var.eff",
+                                      "Mean" = "mean"),
+                          selected = "Absolute Relative Bias"),
+          # uiOutput('perfFormula'),
+          width=4),
+        box(
+          title = "Performance Metrics",
+          plotOutput("perfPlot"),
             width = 8)
-    ),
-
-    fluidRow(
-      box(
-        title = "Performance Metrics",
-        uiOutput('perfFormula'),
-        # htmlOutput("perfDesc"),
-        plotOutput("perfPlot"),
-          width = 12)
-    )
-  ),
+        )
+      ),
+  
     tabItem("datatable",
     fluidRow(
       box(
@@ -187,33 +208,18 @@ ui <- dashboardPage(skin = "purple",
 
 # server ####
 server <- function(input, output) {
+  
+    selected_dist <- reactive({
+      results.long |> 
+        filter(indicator == input$indicator,
+               data %in% input$underlying.data)
+      })
     output$distPlot <- renderPlot({
-# could save out plots as objects in separate script and load in objects            
-        # if(input$indicator == "ivar"){
-        #     x1 <- results.sampled$ivar
-        #     x2 <- results.dgp$ivar
-        #     
-        # } else if(input$indicator == "isd"){
-        #     x1 <- results.sampled$isd
-        #     x2 <- results.dgp$isd
-        #     
-        # } else if(input$indicator == "imean"){
-        #     x1 <- results.sampled$imean
-        #     x2 <- results.dgp$imean
-        # 
-        # } else if(input$indicator == "auto.cor"){
-        #     x1 <- results.sampled$auto.cor
-        #     x2 <- results.dgp$auto.cor
-        #     
-        # } else if(input$indicator == "ar"){
-        #     x1 <- results.sampled$ar
-        #     x2 <- results.dgp$ar
-        # }
-        
-          ggplot(data = results.plot,
-                 aes(x=input$indicator, fill=data)) +
+      
+          ggplot(data = selected_dist(),
+                 aes(x=value, fill=data)) +
             geom_vline(
-              data = results.plot |> 
+              data = results.long |> 
                 filter(data == "dgp"),
               xintercept = mean(input$indicator),
                        color = "#CD4F38FF"
@@ -224,8 +230,8 @@ server <- function(input, output) {
               geom = "area",
                 position = "identity") + # identity needed to distinguish groups
             scale_y_continuous(breaks = c(0, 10)) +
-            scale_fill_manual(c("#3D4F7DFF", "#657060FF")) +
-            facet_grid(n.size ~ samp.freq) +
+              coord_cartesian(ylim = c(0, 20))  +
+        facet_grid(n.size ~ samp.freq) +
             mls_theme() +
             gg.fill +
             labs(title = paste0("Distribution of ", input$indicator, " Estimates")) +
@@ -234,15 +240,23 @@ server <- function(input, output) {
        
             })
     
-    output$perfPlot <- renderPlot({ # could include description of the performance metric and implications underneath it or in the side panel!
-      
-       ggplot(data = outcome.long |> 
-               filter(indicator == input$indicator & name == input$name), # considering creating select option
-               aes(x=n.size, y=value, group = 1)) +
-        geom_line(color = "#CD4F38FF",
-                  linewidth = 2) +
-        geom_point(fill = "#67271BFF",
-                   size = 3) +
+    selected_data <- reactive({
+      outcome.long |> 
+        filter(indicator %in% input$indicator.perf,
+               name %in% input$name) |> 
+        mutate(n.size = factor(n.size,
+                               levels = c("n=30", "n=60", "n=90", "n=120", "n=150"),
+                               labels = c("30", "60", "90", "120", "150")))
+      })
+          
+    output$perfPlot <- renderPlot({
+
+      ggplot(data = selected_data(), 
+               aes(x=n.size, y=value,
+                   color=indicator, group=indicator)) +
+        geom_line(linewidth =2) +
+        geom_point(size = 3) +
+        gg.color+
         facet_grid(~samp.freq,
                    scales = "free") +
         mls_theme() +
@@ -250,72 +264,54 @@ server <- function(input, output) {
           title = paste0(input$name),
           y = "Value",
           x = "Sample Size")
-      # 
-      # ggplot(data = outcome.long |> 
-      #          filter(indicator == input$indicator & name == input$name), # considering creating select option
-      #          aes(x=n.size, y=value)) +
-      #   geom_bar(stat="identity", position="dodge") +
-      #   facet_grid(~samp.freq,
-      #              scales="free") + 
-      #       mls_theme() +
-      #       gg.outcome.theme +
-      #         xlab("Sample Size") + 
-      #         gg.outcome.fill +
-      #         guides(fill = FALSE)
-    })
-    output$perfFormula <- renderUI({
-      
-      if(input$name == "abs.bias"){
-      withMathJax(
-        helpText("Absolute Bias Formula: $\frac{1}{n_{reps}}\sum_{i=1}^{n_{reps}} |\hat{\theta_i} - \theta|$")
-        )
-      }
-      
-      if(input$name == "abs.rel.bias"){
-      withMathJax(
-        helpText("Absolute Relative Bias Formula: $\frac{1}{n_{reps}}\sum_{i=1}^{n_{reps}} \frac{|\hat{\theta_i} - \theta|}{\theta}$")
-        )
-      }
-      
-      if(input$name == "rel.bias"){
-      withMathJax(
-        helpText("Relative Bias Formula: $\frac{1}{n_{reps}}\sum_{i=1}^{n_{reps}} \frac{(\hat{\theta_i} - \theta)}{\theta}$")
-        )
-      }
-      
-      if(input$name == "mse"){
-      withMathJax(
-        helpText("Mean Squared Error Formula: $\frac{1}{n_{reps}}\sum_{i=1}^{n_{reps}} (\hat{\theta_i} - \theta)^2$")
-        )
-      }
-      
-      if(input$name == "rmse"){
-      withMathJax(
-        helpText("Root Mean Squared Error Formula: $\sqrt{MSE}$")
-        )
-      }
-      
-      if(input$name == "var.eff"){
-      withMathJax(
-        helpText("Raw Efficiency Formula: $var(\hat{\theta_i}) = \frac{1}{n_[reps}-1} \sum_i^{n_{reps}}(\hat{\theta_i} - \bar{\hat{\theta}})^2$")
-        )
-      }
-      
-      if(input$name == "mean"){
-      withMathJax(
-        helpText("Mean Formula: $\frac{\sum_i^{n_{reps}} \hat{\theta_i}}{n_[reps}}$")
-        )
-      } 
+
     })
     
-    # output$perfDesc <- renderText({
-    #   
-    # if(input$name == "abs.bias"){
-    #   HTML("this is html!")
-    # } else if(input$name == "abs.rel.bias"){
-    #   HTML("<strong>this is absolute relative bias!</strong>")
-    # }
-    # }) # work on!
+    # output$perfFormula <- renderUI({
+    # 
+    #   if(input$name == "abs.bias"){
+    #   withMathJax(
+    #     HTML("Absolute Bias Formula: $\frac{1}{n_{reps}}\sum_{i=1}^{n_{reps}} |\hat{\theta_i} - \theta|$")
+    #     )
+    #   }
+    # 
+    #   if(input$name == "abs.rel.bias"){
+    #   withMathJax(
+    #     HTML("Absolute Relative Bias Formula: $\frac{1}{n_{reps}}\sum_{i=1}^{n_{reps}} \frac{|\hat{\theta_i} - \theta|}{\theta}$")
+    #     )
+    #   }
+    # 
+    #   if(input$name == "rel.bias"){
+    #   withMathJax(
+    #     HTML("Relative Bias Formula: $\frac{1}{n_{reps}}\sum_{i=1}^{n_{reps}} \frac{(\hat{\theta_i} - \theta)}{\theta}$")
+    #     )
+    #   }
+    # 
+    #   if(input$name == "mse"){
+    #   withMathJax(
+    #     HTML("Mean Squared Error Formula: $\frac{1}{n_{reps}}\sum_{i=1}^{n_{reps}} (\hat{\theta_i} - \theta)^2$")
+    #     )
+    #   }
+    # 
+    #   if(input$name == "rmse"){
+    #   withMathJax(
+    #     HTML("Root Mean Squared Error Formula: $\sqrt{MSE}$")
+    #     )
+    #   }
+    # 
+    #   if(input$name == "var.eff"){
+    #   withMathJax(
+    #     HTML("Raw Efficiency Formula: $var(\hat{\theta_i}) = \frac{1}{n_[reps}-1} \sum_i^{n_{reps}}(\hat{\theta_i} - \bar{\hat{\theta}})^2$")
+    #     )
+    #   }
+    # 
+    #   if(input$name == "mean"){
+    #   withMathJax(
+    #     HTML("Mean Formula: $\frac{\sum_i^{n_{reps}} \hat{\theta_i}}{n_[reps}}$")
+    #     )
+    #   }
+    # })
+    
     output$outcomeTable <- DT::renderDataTable({
   
       DT::datatable(outcome.plot |> 
@@ -330,7 +326,45 @@ server <- function(input, output) {
         })
     
     output$sim.method <- renderText({
-      HTML("<strong>Raw HTML!</strong>")
+      HTML("
+<article>
+  <p>
+  For each of the below indicators of intraindividual variability, a 5(Sampling Frequency) x 5(Number of Observations) combination of conditions were ran.
+  </p>
+<br>
+<table>
+  <tr>
+    <th>IIV Indicators</th>
+    <th>Sampling Frequency</th>
+    <th>Number of Observations</th>
+  </tr>
+  <tr>
+    <td>Variance</td>
+    <td>3x Daily</td>
+    <td>30</td>
+  </tr>
+  <tr>
+    <td>SD</td>
+    <td>2x Daily</td>
+    <td>60</td>
+  </tr>
+  <tr>
+    <td>Mean</td>
+    <td>1x Daily</td>
+    <td>90</td>
+  </tr>
+  <tr>
+    <td>Autocorrelation</td>
+    <td>2x Weekly</td>
+    <td>120</td>
+  </tr>
+  <tr>
+    <td>AR(1) Estimate</td>
+    <td>1x Weekly</td>
+    <td>150</td>
+  </tr>
+</article>
+           ")
     })
 }
 
